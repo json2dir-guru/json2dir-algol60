@@ -1,0 +1,40 @@
+#!/bin/sh
+# The ALGOL 60 evaluator (json2dir.alg, translated by GNU MARST and compiled to
+# out/json2dir-eval) owns UTF-8 checking, JSON parsing, validation, traversal and
+# shell generation; this launcher only moves bytes and runs the generated script.
+set -eu
+
+if [ "$#" -ne 0 ]; then
+  printf '%s\n' 'Usage: json2dir < file.json' >&2
+  exit 2
+fi
+
+script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+
+task_tmp=$(umask 077; mktemp -d "${TMPDIR:-/tmp}/json2dir.XXXXXXXXXX")
+trap 'rm -rf -- "$task_tmp"' 0
+trap 'exit 1' HUP INT TERM
+
+if ! (umask 077; cat > "$task_tmp/input.json"); then
+  printf '%s\n' "json2dir: couldn't read stdin" >&2
+  exit 1
+fi
+
+# ALGOL 60 channels have no end-of-file test, so the evaluator gets the byte count
+# first, then the bytes. Its errors abort through MARST's fault (no core dumps).
+if ! (
+  umask 077
+  ulimit -c 0 2>/dev/null || :
+  {
+    printf '%s\n' "$(wc -c < "$task_tmp/input.json")"
+    cat "$task_tmp/input.json"
+  } | "${JSON2DIR_EVAL:-$script_dir/out/json2dir-eval}" > "$task_tmp/tree.sh"
+); then
+  exit 1
+fi
+if [ "$(tail -n 1 "$task_tmp/tree.sh")" != '# json2dir: end' ]; then
+  printf '%s\n' 'json2dir: the evaluator did not finish' >&2
+  exit 1
+fi
+
+"${JSON2DIR_SHELL:-/bin/sh}" "$task_tmp/tree.sh"
